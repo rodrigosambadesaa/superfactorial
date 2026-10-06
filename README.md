@@ -1,110 +1,92 @@
 # Parallel Superfactorial
 
-Java 17/Eclipse project with two complementary implementations of the superfactorial:
-
-- exact `BigInteger` calculation for non-negative integers;
-- certified arbitrary-precision calculation for decimal and complex arguments.
-
-The project uses the convention:
+Proyecto Java 17/Eclipse para calcular:
 
 ```text
-S(n) = 1! × 2! × 3! × ... × n!
+S(n) = 1! × 2! × ... × n!
 ```
 
-## Exact integer implementation
+Incluye dos implementaciones:
 
-The Java API accepts and returns `BigInteger`:
+- entero exacto de alto rendimiento, con FLINT/GMP y respaldo Java puro;
+- continuación compleja con precisión arbitraria certificada mediante FLINT/Arb.
+
+## Enteros exactos: FLINT/GMP
+
+Para entradas grandes se calcula primero el exponente de cada primo:
+
+```text
+v_p(S(n)) = Σ(j≥1) Σ(k=1..n) floor(k / p^j)
+```
+
+Las potencias primas se multiplican en un árbol que combina primero operandos de
+tamaño parecido. Las operaciones gigantes se ejecutan en FLINT/GMP. Si el backend
+nativo no está instalado, se conserva el algoritmo Java exacto con criba de primos,
+árbol ponderado y `ForkJoinPool`.
+
+API:
 
 ```java
-BigInteger result = ParallelSuperfactorial.superfactorial(n);
+BigInteger value = ParallelSuperfactorial.superfactorial(n);
 ```
 
-For small inputs it accumulates consecutive factorials. For larger practical inputs it calculates the exponent of every prime and multiplies the prime powers through a weight-balanced parallel product tree using `ForkJoinPool`.
+Para resultados gigantes conviene escribir directamente a un archivo. Así no se
+paga la conversión decimal mucho más lenta de `BigInteger.toString()`:
 
-Run:
-
-```text
-programas.ParallelSuperfactorial
+```bash
+java -cp target/classes programas.ParallelSuperfactorial 10000 superfactorial-10000.txt
 ```
 
-## Certified decimal and complex implementation
+El archivo se genera primero con un nombre temporal, se comprueban su longitud y
+SHA-256 y finalmente se mueve de forma atómica a su destino.
 
-The analytic continuation is:
+## Complejos certificados
+
+La continuación analítica usada es:
 
 ```text
 S(z) = G(z + 2)
 ```
 
-where `G` is the Barnes G-function. For every non-negative integer this agrees with the finite product because `G(n + 2) = 1! × 2! × ... × n!`.
-
-The Java front end preserves the decimal input as text and sends its exact rational value to FLINT/Arb. Arb evaluates Barnes G using arbitrary-precision complex ball arithmetic. A result is returned only when both endpoints of the rigorous interval round to the same requested decimal value.
-
-The requested precision is a positive `long`; there is no small fixed precision ceiling in the application. Actual calculations remain bounded by memory, execution time and the limits of the JVM, Python and FLINT data structures.
-
-API example:
+`G` es la función G de Barnes. El argumento decimal se conserva como texto y se
+convierte a un racional exacto; nunca pasa por `double`. Arb propaga intervalos
+complejos rigurosos y solo se devuelve un resultado cuando todo el intervalo
+redondea a los mismos dígitos pedidos.
 
 ```java
 ComplexSuperfactorial.CertifiedResult result =
         ComplexSuperfactorial.superfactorial("1.1i", 100_000L);
-
-String real = result.real();
-String imaginary = result.imaginary();
-long certifiedRealBits = result.realAccuracyBits();
-String checksum = result.sha256();
 ```
 
-The decimal components are returned as strings so that even a precision greater than the `BigDecimal`/`MathContext` `int` limit is not truncated by the Java API. Convenience methods convert them to `BigDecimal` when the requested size fits Java's practical limits.
-
-### Command-line calculation
-
-```text
-programas.ComplexSuperfactorial 1.1i 100000 superfactorial-1.1i-100000.txt
+```bash
+java -cp target/classes programas.ComplexSuperfactorial \
+  1.1i 100000 superfactorial-1.1i-100000.txt
 ```
 
-Accepted input forms include:
+No hay un límite artificial pequeño de precisión. La precisión se recibe como
+`long` y los componentes se devuelven como `String`; los límites reales son
+tiempo, memoria y los tamaños máximos de las estructuras de Java/Python/FLINT.
 
-```text
-3.5
-2i
--i
-3.5+2.25i
-3.5-2.25i
-1e-20+2e-5i
-```
+## Instalación y Eclipse
 
-The parser never converts through `double`. The output file contains the real and imaginary components, interval accuracy in bits, execution time and the SHA-256 digest of the canonical payload `real + "\n" + imaginary + "\n"`.
-
-Both decimal point and decimal comma are accepted, so `1.1i` and `1,1i` are equivalent inputs.
-
-## Requirements
-
-- Java 17 or newer
-- Python 3
-- Eclipse IDE with Java Development Tools and Maven Integration for Eclipse (`m2e`)
-- Maven, when building outside Eclipse
-
-Install the certified numerical backend once:
+Requisitos: Java 17, Maven, Python 3 y Eclipse con m2e.
 
 ```bash
 python3 -m pip install -r requirements.txt
+mvn verify
 ```
 
-`requirements.txt` pins `python-flint`, whose wheel supplies the FLINT/Arb arbitrary-precision native libraries. Set the `PYTHON` environment variable if the desired Python executable is not named `python3` or `python`.
+En Eclipse: **File → Import → Maven → Existing Maven Projects** y seleccionar este
+repositorio. Si el Python deseado no se llama `python3` o `python`, definir la
+variable de entorno `PYTHON`.
 
-## Import into Eclipse
+`requirements.txt` fija `python-flint==0.8.0`. El número de hilos nativos se
+puede ajustar con `SUPERFACTORIAL_THREADS`.
 
-1. Open **File -> Import**.
-2. Select **Maven -> Existing Maven Projects**.
-3. Select the cloned repository as the root directory.
-4. Choose `superfactorial` and finish the import.
-5. If necessary, select **Maven -> Update Project** from the project's context menu.
-6. Install `requirements.txt` in the Python environment visible to Eclipse.
-7. Run either main class as a Java application.
+## Verificación
 
-## Numerical verification
+Las transferencias binarias y los archivos decimales llevan comprobación SHA-256
+y de longitud/bit-length. El proyecto incluye pruebas cruzadas contra la versión
+Java y una acción de GitHub que instala FLINT y ejecuta `mvn verify`.
 
-The certified backend adds 64 decimal guard digits. It then checks that the lower and upper endpoints of each Arb interval produce the same requested significant-digit decimal string. The result also carries Arb's relative accuracy in bits and a SHA-256 integrity digest, which the Java process recalculates before accepting the result.
-
-This is stronger than merely running the same floating-point algorithm twice: every accepted output is enclosed by a rigorously propagated interval.
-
-The repository includes the complete [certified 100,000-digit result for `S(1.1i)`](validation/superfactorial-1.1i-100000.txt) and its [validation certificate](validation/README.md).
+La validación compleja de 100.000 dígitos existente se conserva en `validation/`.
