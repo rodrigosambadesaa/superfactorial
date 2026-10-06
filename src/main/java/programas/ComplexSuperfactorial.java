@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.Writer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -144,28 +143,31 @@ public final class ComplexSuperfactorial {
                 parsed.real(),
                 parsed.imaginary(),
                 Long.toString(precision)
-        ).start();
+        )
+                // A single pipe avoids a stdout/stderr deadlock if the native
+                // backend fails after producing a large diagnostic message.
+                .redirectErrorStream(true)
+                .start();
 
         Map<String, String> fields = new HashMap<>();
+        StringBuilder diagnostics = new StringBuilder();
         try (BufferedReader standardOutput = process.inputReader(StandardCharsets.UTF_8)) {
             String line;
             while ((line = standardOutput.readLine()) != null) {
                 int separator = line.indexOf('\t');
                 if (separator > 0) {
                     fields.put(line.substring(0, separator), line.substring(separator + 1));
+                } else {
+                    diagnostics.append(line).append('\n');
                 }
             }
-        }
-
-        String errorOutput;
-        try (BufferedReader standardError = process.errorReader(StandardCharsets.UTF_8)) {
-            errorOutput = standardError.lines().reduce("", (left, right) -> left + right + "\n");
         }
 
         int exitCode = process.waitFor();
         if (exitCode != 0) {
             throw new IOException(
-                    "The FLINT/Arb worker failed with exit code " + exitCode + ":\n" + errorOutput
+                    "The FLINT/Arb worker failed with exit code " + exitCode + ":\n"
+                            + diagnostics
             );
         }
 
