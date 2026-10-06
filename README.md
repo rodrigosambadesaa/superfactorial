@@ -1,11 +1,11 @@
 # Parallel Superfactorial
 
-Java 17 calculator with two complementary implementations of the superfactorial:
+Java 17/Eclipse project with two complementary implementations of the superfactorial:
 
-- an exact `BigInteger` implementation for non-negative integers;
-- an arbitrary-precision continuation for real and complex decimal arguments.
+- exact `BigInteger` calculation for non-negative integers;
+- certified arbitrary-precision calculation for decimal and complex arguments.
 
-This project uses the convention:
+The project uses the convention:
 
 ```text
 S(n) = 1! × 2! × 3! × ... × n!
@@ -13,7 +13,7 @@ S(n) = 1! × 2! × 3! × ... × n!
 
 ## Exact integer implementation
 
-The integer API accepts and returns `BigInteger`:
+The Java API accepts and returns `BigInteger`:
 
 ```java
 BigInteger result = ParallelSuperfactorial.superfactorial(n);
@@ -27,35 +27,41 @@ Run:
 programas.ParallelSuperfactorial
 ```
 
-## Arbitrary-precision real and complex implementation
+## Certified decimal and complex implementation
 
-The analytic continuation is expressed with the Barnes G-function:
+The analytic continuation is:
 
 ```text
 S(z) = G(z + 2)
 ```
 
-For every non-negative integer this agrees with the finite product because `G(n + 2) = 1! × 2! × ... × n!`.
+where `G` is the Barnes G-function. For every non-negative integer this agrees with the finite product because `G(n + 2) = 1! × 2! × ... × n!`.
 
-The API receives a `BigComplex` and an explicit decimal precision:
+The Java front end preserves the decimal input as text and sends its exact rational value to FLINT/Arb. Arb evaluates Barnes G using arbitrary-precision complex ball arithmetic. A result is returned only when both endpoints of the rigorous interval round to the same requested decimal value.
+
+The requested precision is a positive `long`; there is no small fixed precision ceiling in the application. Actual calculations remain bounded by memory, execution time and the limits of the JVM, Python and FLINT data structures.
+
+API example:
 
 ```java
-MathContext context = new MathContext(200, RoundingMode.HALF_EVEN);
-BigComplex z = BigComplex.valueOf(
-        BigDecimal.ZERO,
-        BigDecimalMath.toBigDecimal("1.111111111111111111111111111111111111111")
-);
+ComplexSuperfactorial.CertifiedResult result =
+        ComplexSuperfactorial.superfactorial("1.1i", 100_000L);
 
-BigComplex result = ComplexSuperfactorial.superfactorial(z, context);
+String real = result.real();
+String imaginary = result.imaginary();
+long certifiedRealBits = result.realAccuracyBits();
+String checksum = result.sha256();
 ```
 
-Run:
+The decimal components are returned as strings so that even a precision greater than the `BigDecimal`/`MathContext` `int` limit is not truncated by the Java API. Convenience methods convert them to `BigDecimal` when the requested size fits Java's practical limits.
+
+### Command-line calculation
 
 ```text
-programas.ComplexSuperfactorial
+programas.ComplexSuperfactorial 1.1i 100000 superfactorial-1.1i-100000.txt
 ```
 
-Accepted console formats include:
+Accepted input forms include:
 
 ```text
 3.5
@@ -66,24 +72,24 @@ Accepted console formats include:
 1e-20+2e-5i
 ```
 
-The parser never converts through `double`. Long decimal components are read with `BigDecimalMath.toBigDecimal(String)`.
+The parser never converts through `double`. The output file contains the real and imaginary components, interval accuracy in bits, execution time and the SHA-256 digest of the canonical payload `real + "\n" + imaginary + "\n"`.
 
-### Numerical method
-
-- `BigComplex`, elementary complex functions and arbitrary-precision decimal operations come from `ch.obermuhlner:big-math:2.3.2`.
-- `LogBarnesG` uses the functional equation of the Barnes G-function and an asymptotic expansion.
-- `LogGamma` is evaluated by recurrence and Stirling's expansion.
-- Bernoulli numbers use an incremental Akiyama-Tanigawa cache with extended internal precision.
-- The Kinkelin constant `zeta'(-1)` is calculated dynamically at the working precision.
-- The continuation is entire and has zeros at `z = -2, -3, -4, ...`.
+Both decimal point and decimal comma are accepted, so `1.1i` and `1,1i` are equivalent inputs.
 
 ## Requirements
 
 - Java 17 or newer
+- Python 3
 - Eclipse IDE with Java Development Tools and Maven Integration for Eclipse (`m2e`)
 - Maven, when building outside Eclipse
 
-The external dependency is declared in `pom.xml` and downloaded from Maven Central.
+Install the certified numerical backend once:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+`requirements.txt` pins `python-flint`, whose wheel supplies the FLINT/Arb arbitrary-precision native libraries. Set the `PYTHON` environment variable if the desired Python executable is not named `python3` or `python`.
 
 ## Import into Eclipse
 
@@ -92,10 +98,13 @@ The external dependency is declared in `pom.xml` and downloaded from Maven Centr
 3. Select the cloned repository as the root directory.
 4. Choose `superfactorial` and finish the import.
 5. If necessary, select **Maven -> Update Project** from the project's context menu.
-6. Run either main class as a Java application.
+6. Install `requirements.txt` in the Python environment visible to Eclipse.
+7. Run either main class as a Java application.
 
-## Precision and practical limits
+## Numerical verification
 
-"Arbitrary precision" means that the caller chooses a finite number of significant decimal digits. A transcendental complex result normally has infinitely many non-repeating digits, so no program can return all of them.
+The certified backend adds 64 decimal guard digits. It then checks that the lower and upper endpoints of each Arb interval produce the same requested significant-digit decimal string. The result also carries Arb's relative accuracy in bits and a SHA-256 integrity digest, which the Java process recalculates before accepting the result.
 
-Input components are not restricted to `double` precision. Java still imposes practical limits through available memory, execution time, `BigDecimal` scale, array sizes and the positive `int` precision used by `MathContext`.
+This is stronger than merely running the same floating-point algorithm twice: every accepted output is enclosed by a rigorously propagated interval.
+
+The repository includes the complete [certified 100,000-digit result for `S(1.1i)`](validation/superfactorial-1.1i-100000.txt) and its [validation certificate](validation/README.md).
